@@ -65,11 +65,15 @@ public class FertileLilyPadBlock extends BushBlock implements ICreativeTabItemGe
 		if (!currentDimensionTicks.containsKey(dimKey) || currentDimensionTicks.get(dimKey) != level.getGameTime()) {
 			currentDimensionTicks.put(dimKey, level.getGameTime());
 			dimensionPositionsTicked.put(dimKey, new HashSet<>());
-		} else if (dimensionPositionsTicked.computeIfAbsent(dimKey, k -> new HashSet<>()).contains(pos)) {
+		}
+		Set<BlockPos> positionsTicked = dimensionPositionsTicked.computeIfAbsent(dimKey, k -> new HashSet<>());
+		if (positionsTicked.contains(pos)) {
 			return;
 		}
-		growCropsNearby(level, pos, state);
-		dimensionPositionsTicked.computeIfAbsent(dimKey, k -> new HashSet<>()).add(pos);
+		// Pads due on the same tick were loaded or placed together. Spread every pad after the first, and drift each schedule by a tick so they keep
+		// separating.
+		growCropsNearby(level, pos, state, random, !positionsTicked.isEmpty());
+		positionsTicked.add(pos);
 	}
 
 	@Override
@@ -91,7 +95,7 @@ public class FertileLilyPadBlock extends BushBlock implements ICreativeTabItemGe
 	}
 
 	@SuppressWarnings("deprecation")
-	private void growCropsNearby(ServerLevel level, BlockPos pos, BlockState state) {
+	private void growCropsNearby(ServerLevel level, BlockPos pos, BlockState state, RandomSource random, boolean spreadSchedule) {
 		BlockPos.betweenClosed(pos.offset(-tileRange(), -tileRange(), -tileRange()), pos.offset(tileRange(), tileRange(), tileRange())).forEach(cropPos -> {
 			if (!level.hasChunkAt(cropPos)) {
 				return;
@@ -112,7 +116,18 @@ public class FertileLilyPadBlock extends BushBlock implements ICreativeTabItemGe
 				tickCropBlock(level, cropPos, cropState, distance);
 			}
 		});
-		level.scheduleTick(pos, state.getBlock(), secondsBetweenGrowthTicks() * 20 / getNumberOfPotencySteps());
+		level.scheduleTick(pos, state.getBlock(), growthTickDelay(random, spreadSchedule));
+	}
+
+	private int growthTickDelay(RandomSource random, boolean spreadSchedule) {
+		int baseDelay = Math.max(1, secondsBetweenGrowthTicks() * 20 / Math.max(1, getNumberOfPotencySteps()));
+		int drift = random.nextInt(3) - 1;
+		if (!spreadSchedule) {
+			return Math.max(1, baseDelay + drift);
+		}
+		int halfSpread = baseDelay / 2;
+		int randomization = random.nextInt(halfSpread * 2 + 1) - halfSpread;
+		return Math.max(1, baseDelay + randomization + drift);
 	}
 
 	private boolean isAllowedCropBlock(Block cropBlock) {
